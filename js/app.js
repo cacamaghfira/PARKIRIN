@@ -1,105 +1,115 @@
-
-import { validasiNim, validasiPassword, indeksZona, status, kelasStatus, sisa, rekomendasi, formatDurasi } from "./logika.js";
+// =====================================================
+// UI: membaca input pengguna dan menampilkan hasil
+// Alur mengikuti flowchart: Login -> Pilih Zona -> Status -> Selesai
+// =====================================================
+import { validasiLogin, indeksZona, status, kelasStatus, sisa, penuh, rekomendasiTerdekat, formatDurasi } from "./logika.js";
 import { FIREBASE_CONFIG } from "./firebase-config.js";
 import { buatPenyimpanan } from "./data.js";
 
 const el = (id) => document.getElementById(id);
 const appEl = el("app");
 
-
+// State = semua data yang sedang dipakai layar
 const S = {
-  langkah: "login",
+  langkah: "login", // login | pilih | status | selesai
   user: null,
   jenis: "motor",
   zonas: [],
-  aktif: null,
+  aktif: null, // data parkir pengguna saat ini
   zonaPilihan: null,
-  hasil: null,
+  hasil: null, // hasil check-out
   pesan: "",
-  nimIsi: "",
+  npmIsi: "",
   pwIsi: "",
   sibuk: false,
 };
 let store;
-let berhenti = null;
+let berhenti = null; // fungsi untuk berhenti mendengarkan data zona
 
-
+// Mencegah teks pengguna merusak HTML (keamanan dasar)
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
+const persen = (z, j) => Math.min(100, Math.round(indeksZona(z, j) * 100));
 
-
+// ---------- Tampilan tiap langkah ----------
 function tampilLogin() {
-  const fb = store.butuhPassword;
   return `
   <section class="card">
-    <h2>Login dengan NIM</h2>
-    <label for="nim">NIM (10 digit angka)</label>
-    <input id="nim" inputmode="numeric" maxlength="10" autocomplete="username" placeholder="mis. 2205101001">
-    ${fb ? `<label for="pw">Kata sandi (minimal 6 karakter)</label>
-    <input id="pw" type="password" autocomplete="current-password">` : ""}
+    <h2>Login</h2>
+    <label for="npm">NPM</label>
+    <input id="npm" inputmode="numeric" autocomplete="username" placeholder="Masukkan NPM">
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="Masukkan password">
     <button class="btn" data-aksi="masuk" ${S.sibuk ? "disabled" : ""}>${S.pesan ? "Login Ulang" : "Masuk"}</button>
-    ${fb ? `<button class="btn btn-alt" data-aksi="daftar" ${S.sibuk ? "disabled" : ""}>Daftar akun baru</button>` : ""}
     ${S.pesan ? `<p class="err" role="alert">${esc(S.pesan)}</p>` : ""}
-    ${fb ? "" : `<p class="note">Mode demo: data tersimpan di browser ini saja. Hubungkan Firebase agar data dibagikan ke semua pengguna.</p>`}
   </section>`;
 }
 
 function tampilPilih() {
+  const j = S.jenis;
+  const z = S.zonas.find((x) => x.id === S.zonaPilihan);
   const opsi = S.zonas
-    .map((z) => {
-      const s = status(indeksZona(z, S.jenis));
-      const penuh = sisa(z, S.jenis) <= 0;
-      return `<option value="${esc(z.id)}" ${z.id === S.zonaPilihan ? "selected" : ""} ${penuh ? "disabled" : ""}>${esc(z.nama)} (${s})</option>`;
+    .map((x) => {
+      const label = penuh(x, j) ? "Penuh" : status(indeksZona(x, j));
+      return `<option value="${esc(x.id)}" ${x.id === S.zonaPilihan ? "selected" : ""}>${esc(x.nama)} (${label})</option>`;
     })
     .join("");
+
+  let info = "";
+  let rek = "";
+  if (z) {
+    const k = kelasStatus(penuh(z, j) ? "Penuh" : status(indeksZona(z, j)));
+    info = `<div class="${k}"><div class="bar"><i style="width:${persen(z, j)}%"></i></div></div>
+      <div class="mut">Terisi ${z.isi[j]} dari ${z.kap[j]} (${j}) · sisa ${Math.max(0, sisa(z, j))} petak</div>`;
+    // Rekomendasi hanya muncul jika zona yang dipilih penuh
+    if (penuh(z, j)) {
+      const r = rekomendasiTerdekat(S.zonas, j, z.id);
+      rek = r
+        ? `<section class="rec"><b>${esc(z.nama)} penuh untuk ${j}</b>
+            <div>Rekomendasi terdekat: <b>${esc(r.zona.nama)}</b> (±${r.jarak} m), masih sisa ${sisa(r.zona, j)} petak.</div>
+            <button class="btn" data-aksi="pakaiRek" data-id="${esc(r.zona.id)}">Pilih ${esc(r.zona.nama)}</button></section>`
+        : `<section class="rec"><b>Semua zona penuh untuk ${j}.</b><div>Coba lagi beberapa saat lagi.</div></section>`;
+    }
+  }
   return `
   <section class="card">
     <h2>Pilih zona dan jenis kendaraan</h2>
-    <div class="mut">NIM ${esc(S.user.nim)}</div>
+    <div class="mut">NPM ${esc(S.user.npm)}</div>
     <label>Jenis kendaraan</label>
     <div class="seg">
-      <button class="${S.jenis === "motor" ? "on" : ""}" data-aksi="jenis" data-nilai="motor">🏍️ Motor</button>
-      <button class="${S.jenis === "mobil" ? "on" : ""}" data-aksi="jenis" data-nilai="mobil">🚗 Mobil</button>
+      <button class="${j === "motor" ? "on" : ""}" data-aksi="jenis" data-nilai="motor">🏍️ Motor</button>
+      <button class="${j === "mobil" ? "on" : ""}" data-aksi="jenis" data-nilai="mobil">🚗 Mobil</button>
     </div>
     <label for="zona">Zona parkir</label>
     <select id="zona">${opsi}</select>
+    ${info}
     <button class="btn" data-aksi="checkin" ${S.sibuk ? "disabled" : ""}>Check-in</button>
     ${S.pesan ? `<p class="err" role="alert">${esc(S.pesan)}</p>` : ""}
-    <p class="note">Zona yang penuh tidak bisa dipilih.</p>
-  </section>`;
+  </section>${rek}`;
 }
 
 function tampilStatus() {
   const j = S.aktif.jenis;
   const z = S.zonas.find((x) => x.id === S.aktif.zona);
   if (!z) return `<section class="card"><p class="mut">Memuat data zona...</p></section>`;
-  const i = indeksZona(z, j);
-  const st = status(i);
+  const st = penuh(z, j) ? "Penuh" : status(indeksZona(z, j));
   const k = kelasStatus(st);
-  const best = rekomendasi(S.zonas, j);
-  const teksRek = !best
-    ? "Semua zona penuh."
-    : best.id === z.id
-    ? "Zona Anda sudah yang paling lengang."
-    : `${esc(best.nama)} paling lengang (${Math.round(indeksZona(best, j) * 100)}%). Pertimbangkan zona ini untuk lain waktu.`;
   const daftar = S.zonas
     .map((x) => {
-      const ix = indeksZona(x, j);
-      const kk = kelasStatus(status(ix));
-      return `<div class="zona ${kk}">
-        <div class="row"><span class="nama">${esc(x.nama)}</span><b>${Math.round(ix * 100)}% · ${status(ix)}</b></div>
-        <div class="bar"><i style="width:${Math.min(100, Math.round(ix * 100))}%"></i></div>
-        <small>Sisa ${sisa(x, j)} petak</small></div>`;
+      const s = penuh(x, j) ? "Penuh" : status(indeksZona(x, j));
+      return `<div class="zona ${kelasStatus(s)}">
+        <div class="row"><span class="nama">${esc(x.nama)}</span><b>${persen(x, j)}% · ${s}</b></div>
+        <div class="bar"><i style="width:${persen(x, j)}%"></i></div>
+        <small>Sisa ${Math.max(0, sisa(x, j))} petak</small></div>`;
     })
     .join("");
   return `
   <section class="card">
     <div class="row"><h2 style="margin:0">Anda parkir di ${esc(z.nama)}</h2><span class="tag ${k}">${st}</span></div>
-    <div class="${k}"><div class="bar"><i style="width:${Math.min(100, Math.round(i * 100))}%"></i></div></div>
-    <div class="mut">Indeks kepadatan ${Math.round(i * 100)}% · terisi ${z.isi[j]} dari ${z.kap[j]} (${j})</div>
+    <div class="${k}"><div class="bar"><i style="width:${persen(z, j)}%"></i></div></div>
+    <div class="mut">Indeks kepadatan ${persen(z, j)}% · terisi ${z.isi[j]} dari ${z.kap[j]} (${j})</div>
   </section>
-  <section class="rec"><b>Rekomendasi zona</b><div>${teksRek}</div></section>
   <section class="card"><h2>Semua zona (${j})</h2>${daftar}</section>
   <section class="card">
     <h2>Pengguna selesai parkir?</h2>
@@ -118,11 +128,11 @@ function tampilSelesai() {
     <h2>Selesai</h2>
     <p>Check-out berhasil dan data tersimpan.<br>Zona: <b>${esc(z ? z.nama : h.zona)}</b><br>Durasi parkir: <b>${formatDurasi(h.durasi)}</b></p>
     <button class="btn" data-aksi="ulang">Parkir lagi</button>
-    ${store.mode === "demo" ? `<button class="btn btn-alt" data-aksi="reset">Reset data demo</button>` : ""}
+    <button class="btn btn-alt" data-aksi="keluar">Keluar</button>
   </section>`;
 }
 
-
+// ---------- Menggambar layar ----------
 const NAMA_LANGKAH = ["Login", "Pilih zona", "Status", "Selesai"];
 const URUTAN = { login: 0, pilih: 1, status: 2, selesai: 3 };
 
@@ -133,16 +143,16 @@ function gambar() {
   }).join("");
   el("btnKeluar").hidden = !S.user;
   appEl.innerHTML = { login: tampilLogin, pilih: tampilPilih, status: tampilStatus, selesai: tampilSelesai }[S.langkah]();
-  if (S.langkah === "login" && el("nim")) {
-    el("nim").value = S.nimIsi;
-    if (el("pw")) el("pw").value = S.pwIsi;
+  if (S.langkah === "login" && el("npm")) {
+    el("npm").value = S.npmIsi;
+    el("pw").value = S.pwIsi;
   }
 }
 
-
+// ---------- Aksi (apa yang terjadi saat tombol ditekan) ----------
 async function jalankan(fn) {
-  
-  if (el("nim")) S.nimIsi = el("nim").value.trim();
+  // Simpan isian form dulu, karena layar akan digambar ulang (tombol jadi nonaktif)
+  if (el("npm")) S.npmIsi = el("npm").value.trim();
   if (el("pw")) S.pwIsi = el("pw").value;
   S.sibuk = true;
   S.pesan = "";
@@ -161,7 +171,7 @@ function mulaiLangganan() {
   berhenti = store.langgananZona((z) => {
     S.zonas = z;
     if (!S.zonaPilihan || !z.find((x) => x.id === S.zonaPilihan)) S.zonaPilihan = z[0] ? z[0].id : null;
-    if (S.langkah === "pilih" || S.langkah === "status" || S.langkah === "selesai") gambar();
+    if (S.user) gambar();
   });
 }
 
@@ -172,26 +182,36 @@ async function setelahLogin(user) {
   mulaiLangganan();
 }
 
-async function bacaFormLogin(daftar) {
-  const nim = S.nimIsi;
-  const pw = S.pwIsi;
-  if (!validasiNim(nim)) throw new Error("Akun tidak valid. NIM harus 10 digit angka.");
-  if (store.butuhPassword && !validasiPassword(pw)) throw new Error("Kata sandi minimal 6 karakter.");
-  const user = daftar ? await store.daftar(nim, pw) : await store.masuk(nim, pw);
-  S.pwIsi = "";
-  await setelahLogin(user);
+async function keluarApp() {
+  if (berhenti) berhenti();
+  await store.keluar();
+  Object.assign(S, { langkah: "login", user: null, aktif: null, hasil: null, pesan: "", npmIsi: "", pwIsi: "" });
+  gambar();
 }
 
 const AKSI = {
-  masuk: () => jalankan(() => bacaFormLogin(false)),
-  daftar: () => jalankan(() => bacaFormLogin(true)),
+  // Node "Akun valid?": NPM minimal 15 digit angka, password harus sama dengan NPM
+  masuk: () =>
+    jalankan(async () => {
+      if (!validasiLogin(S.npmIsi, S.pwIsi)) throw new Error("NPM atau password salah.");
+      const user = await store.masuk(S.npmIsi, S.pwIsi);
+      S.pwIsi = "";
+      await setelahLogin(user);
+    }),
   jenis: (d) => {
     S.jenis = d.nilai;
     S.pesan = "";
     gambar();
   },
+  pakaiRek: (d) => {
+    S.zonaPilihan = d.id;
+    S.pesan = "";
+    gambar();
+  },
   checkin: () =>
     jalankan(async () => {
+      const z = S.zonas.find((x) => x.id === S.zonaPilihan);
+      if (z && penuh(z, S.jenis)) throw new Error(`Check-in gagal: ${z.nama} penuh untuk ${S.jenis}. Pilih zona yang direkomendasikan.`);
       await store.checkIn(S.user.id, S.zonaPilihan, S.jenis);
       S.aktif = await store.ambilAktif(S.user.id);
       S.langkah = "status";
@@ -213,10 +233,7 @@ const AKSI = {
     S.pesan = "";
     gambar();
   },
-  reset: () =>
-    jalankan(async () => {
-      await store.resetData();
-    }),
+  keluar: () => keluarApp(),
 };
 
 appEl.addEventListener("click", (e) => {
@@ -224,16 +241,15 @@ appEl.addEventListener("click", (e) => {
   if (tombol && !tombol.disabled) AKSI[tombol.dataset.aksi](tombol.dataset);
 });
 appEl.addEventListener("change", (e) => {
-  if (e.target.id === "zona") S.zonaPilihan = e.target.value;
+  if (e.target.id === "zona") {
+    S.zonaPilihan = e.target.value;
+    S.pesan = "";
+    gambar();
+  }
 });
-el("btnKeluar").addEventListener("click", async () => {
-  if (berhenti) berhenti();
-  await store.keluar();
-  Object.assign(S, { langkah: "login", user: null, aktif: null, hasil: null, pesan: "", nimIsi: "", pwIsi: "" });
-  gambar();
-});
+el("btnKeluar").addEventListener("click", keluarApp);
 
-
+// ---------- Mulai aplikasi ----------
 (async function mulai() {
   try {
     store = await buatPenyimpanan(FIREBASE_CONFIG);

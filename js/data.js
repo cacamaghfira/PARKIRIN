@@ -1,4 +1,10 @@
-
+// =====================================================
+// DATA: tempat menyimpan dan mengambil data (Simpan Data)
+// Ada dua "penyimpanan" dengan fungsi yang sama:
+//   1. buatDemo()     -> data di browser sendiri (localStorage), tanpa internet
+//   2. buatFirebase() -> data di Firebase, dibagikan ke semua pengguna secara real-time
+// app.js tidak perlu tahu mana yang dipakai.
+// =====================================================
 import { ZONA_AWAL } from "./logika.js";
 
 const salin = (x) => JSON.parse(JSON.stringify(x));
@@ -7,9 +13,12 @@ export async function buatPenyimpanan(config) {
   return config ? buatFirebase(config) : buatDemo();
 }
 
-
+// ---------- MODE DEMO ----------
 function buatDemo() {
-  const KZ = "parkirin_zona";
+  // Nama penyimpanan ikut berubah jika ZONA_AWAL diubah, sehingga data lama di browser
+  // otomatis tidak dipakai lagi (tanpa perlu menghapus manual).
+  const tanda = JSON.stringify(ZONA_AWAL).split("").reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+  const KZ = "parkirin_zona_" + tanda;
   const KU = "parkirin_user";
   const KA = "parkirin_aktif_";
   const baca = (k, d) => {
@@ -38,20 +47,17 @@ function buatDemo() {
 
   return {
     mode: "demo",
-    butuhPassword: false,
-    async masuk(nim) {
-      const u = { id: nim, nim };
+    async masuk(npm) {
+      const u = { id: npm, npm };
       tulis(KU, u);
       return u;
-    },
-    async daftar(nim) {
-      return this.masuk(nim);
     },
     async keluar() {
       localStorage.removeItem(KU);
     },
     async userSaatIni() {
-      return baca(KU, null);
+      const u = baca(KU, null);
+      return u ? { id: u.id, npm: u.id } : null;
     },
     async ambilAktif(uid) {
       return baca(KA + uid, null);
@@ -75,14 +81,10 @@ function buatDemo() {
       localStorage.removeItem(KA + uid);
       return { zona: a.zona, jenis: a.jenis, durasi: Date.now() - a.mulai };
     },
-    async resetData() {
-      localStorage.removeItem(KZ);
-      kabari();
-    },
   };
 }
 
-
+// ---------- MODE FIREBASE ----------
 async function buatFirebase(config) {
   const B = "https://www.gstatic.com/firebasejs/10.12.2/";
   const [{ initializeApp }, A, S] = await Promise.all([
@@ -94,9 +96,9 @@ async function buatFirebase(config) {
   const auth = A.getAuth(app);
   const db = S.getFirestore(app);
 
-  
-  const emailDari = (nim) => `${nim}@parkirin.app`;
-  const keUser = (u) => (u ? { id: u.uid, nim: u.email.split("@")[0] } : null);
+  // Firebase login memakai email, jadi NPM diubah menjadi email palsu: NPM@parkirin.app
+  const emailDari = (npm) => `${npm}@parkirin.app`;
+  const keUser = (u) => (u ? { id: u.uid, npm: u.email.split("@")[0] } : null);
   const siapAuth = new Promise((res) => {
     const berhenti = A.onAuthStateChanged(auth, (u) => {
       berhenti();
@@ -105,10 +107,8 @@ async function buatFirebase(config) {
   });
   const terjemah = (e) => {
     const k = e.code || "";
-    if (k.includes("invalid-credential") || k.includes("wrong-password") || k.includes("user-not-found"))
-      return "NIM atau kata sandi salah, atau akun belum didaftarkan.";
-    if (k.includes("email-already-in-use")) return "NIM ini sudah terdaftar. Silakan masuk.";
-    if (k.includes("weak-password")) return "Kata sandi terlalu lemah (minimal 6 karakter).";
+    if (k.includes("invalid-credential") || k.includes("wrong-password") || k.includes("email-already-in-use"))
+      return "NPM atau password salah.";
     if (k.includes("network")) return "Tidak ada koneksi internet.";
     if (k.includes("permission-denied")) return "Akses ditolak oleh aturan keamanan database.";
     return e.message || "Terjadi kesalahan.";
@@ -131,11 +131,17 @@ async function buatFirebase(config) {
 
   return {
     mode: "firebase",
-    butuhPassword: true,
-    masuk: (nim, pw) =>
-      bungkus(async () => keUser((await A.signInWithEmailAndPassword(auth, emailDari(nim), pw)).user)),
-    daftar: (nim, pw) =>
-      bungkus(async () => keUser((await A.createUserWithEmailAndPassword(auth, emailDari(nim), pw)).user)),
+    // Login pertama kali otomatis membuat akun (password = NPM), login berikutnya masuk biasa
+    masuk: (npm, pw) =>
+      bungkus(async () => {
+        try {
+          return keUser((await A.signInWithEmailAndPassword(auth, emailDari(npm), pw)).user);
+        } catch (e) {
+          const k = e.code || "";
+          if (!k.includes("invalid-credential") && !k.includes("user-not-found")) throw e;
+          return keUser((await A.createUserWithEmailAndPassword(auth, emailDari(npm), pw)).user);
+        }
+      }),
     keluar: () => A.signOut(auth),
     userSaatIni: async () => keUser(await siapAuth),
     ambilAktif: (uid) =>
@@ -151,7 +157,7 @@ async function buatFirebase(config) {
         (e) => console.error("Gagal membaca zona:", e)
       );
     },
-    
+    // Transaction: baca dan ubah dilakukan sekaligus, supaya aman jika banyak orang check-in bersamaan
     checkIn: (uid, zonaId, jenis) =>
       bungkus(() =>
         S.runTransaction(db, async (t) => {
@@ -179,6 +185,5 @@ async function buatFirebase(config) {
           return { zona: a.zona, jenis: a.jenis, durasi: Date.now() - a.mulai };
         })
       ),
-    resetData: async () => {},
   };
 }

@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Data zona: semua pengguna yang sudah login boleh membaca.
+    // Perubahan hanya boleh pada jumlah kendaraan (isi), maksimal 1 per aksi,
+    // dan tidak boleh melewati kapasitas atau di bawah 0.
+    match /zona/{zonaId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && zonaId in ['A', 'B', 'C', 'D'];
+      allow update: if request.auth != null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isi'])
+        && request.resource.data.isi.motor >= 0
+        && request.resource.data.isi.motor <= resource.data.kap.motor
+        && request.resource.data.isi.mobil >= 0
+        && request.resource.data.isi.mobil <= resource.data.kap.mobil
+        && math.abs(request.resource.data.isi.motor - resource.data.isi.motor) <= 1
+        && math.abs(request.resource.data.isi.mobil - resource.data.isi.mobil) <= 1;
+    }
+
+    // Data parkir aktif milik pengguna: hanya pemiliknya yang boleh membaca dan menulis.
+    match /parkir/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}

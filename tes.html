@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tes Logika PARKIRIN</title>
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h2>Tes logika PARKIRIN</h2>
+      <div class="card" id="hasil"></div>
+      <a href="index.html">Kembali ke aplikasi</a>
+    </main>
+    <script type="module">
+      import { jalankanTes } from "./js/tes.js";
+      const hasil = jalankanTes();
+      const lulus = hasil.filter((h) => h.lulus).length;
+      document.getElementById("hasil").innerHTML =
+        `<p><b>${lulus} dari ${hasil.length} tes lulus</b></p>` +
+        hasil.map((h) => `<div class="${h.lulus ? "ok" : "bad"}">${h.lulus ? "✓" : "✗"} ${h.nama}</div>`).join("");
+    </script>
+  </body>
+</html>
